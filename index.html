@@ -3,7 +3,145 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hello You</title>
+    <meta name="theme-color" content="#0b0b10" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Orbitron:wght@500;700&display=swap" rel="stylesheet" />
+    <title>Neon Drift</title>
+    <style>
+      :root {
+        --bg-0: #0b0b10;
+        --bg-1: #0f0f1a;
+        --fg: #e8e8f0;
+        --muted: #a0a3b1;
+        --pink: #ff3b8d;
+        --pink-2: #ff7bbd;
+        --glow: 0 0 30px rgba(255, 59, 141, 0.35);
+        --border: rgba(255, 59, 141, 0.25);
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body, #root { height: 100%; }
+
+      body {
+        margin: 0;
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+        color: var(--fg);
+        background:
+          radial-gradient(1200px 600px at 80% -20%, rgba(255, 59, 141, 0.15), transparent 60%),
+          radial-gradient(900px 500px at -10% 120%, rgba(173, 51, 255, 0.12), transparent 60%),
+          linear-gradient(180deg, var(--bg-0), var(--bg-1));
+        background-attachment: fixed;
+      }
+
+      a { color: inherit; text-decoration: none; }
+
+      .app-header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        background: rgba(10, 10, 16, 0.65);
+        backdrop-filter: saturate(140%) blur(10px);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .brand {
+        font-family: Orbitron, Inter, system-ui, sans-serif;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        font-size: 20px;
+        background: linear-gradient(90deg, var(--pink), #b066ff 60%, var(--pink-2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        text-shadow: 0 0 12px rgba(255, 59, 141, 0.35);
+      }
+
+      .app-main {
+        min-height: calc(100% - 64px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .container {
+        width: 100%;
+        max-width: 920px;
+        display: grid;
+        gap: 16px;
+        grid-template-columns: 1fr;
+        justify-items: center;
+      }
+
+      .game-card {
+        width: 100%;
+        max-width: 480px;
+        background:
+          linear-gradient(180deg, rgba(255, 59, 141, 0.06), rgba(176, 102, 255, 0.05)) padding-box,
+          linear-gradient(120deg, rgba(255, 59, 141, 0.7), rgba(176, 102, 255, 0.7)) border-box;
+        border: 1px solid transparent;
+        border-radius: 16px;
+        padding: 12px;
+        box-shadow: var(--glow);
+      }
+
+      .game-frame {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #0a0a12;
+        border: 1px solid rgba(255, 255, 255, 0.04);
+      }
+
+      canvas.game-canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+        image-rendering: pixelated;
+      }
+
+      .hud {
+        position: absolute;
+        top: 8px;
+        left: 12px;
+        right: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: Orbitron, Inter, system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 12px;
+        color: #fff;
+        text-shadow: 0 0 8px rgba(255, 59, 141, 0.45);
+        pointer-events: none;
+      }
+
+      .instructions {
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .kbd {
+        display: inline-block;
+        padding: 0 6px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 20px;
+        color: #fff;
+        margin: 0 2px;
+      }
+
+    </style>
   </head>
   <body>
     <div id="root"></div>
