@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef } from 'react'
 
 function NeonRacer() {
   const canvasRef = useRef(null)
@@ -20,12 +20,32 @@ function NeonRacer() {
     const centerY = HEIGHT / 2
     const trackRadius = 125
     const trackWidth = 86
-    const innerR = trackRadius - trackWidth / 2
-    const outerR = trackRadius + trackWidth / 2
+    const TAU = Math.PI * 2
+    const SEGMENTS = 256
+
+    // Track profile: wavy radius and width over angle
+    function radiusProfile(theta) {
+      // Centerline radius modulation
+      return trackRadius + 22 * Math.sin(theta * 3) + 12 * Math.sin(theta * 5 + 1.1)
+    }
+
+    function widthProfile(theta) {
+      return trackWidth + 14 * Math.sin(theta * 2 + 0.3)
+    }
+
+    function getRadii(theta) {
+      const r = radiusProfile(theta)
+      const w = widthProfile(theta)
+      return { inner: r - w / 2, outer: r + w / 2, center: r, width: w }
+    }
+
+    // Conservative radial limit used to nudge player back if too far
+    const boundaryLimit = trackRadius + trackWidth / 2 + 60
 
     const startAngle = -Math.PI / 2 // top
-    const startOnCenterlineX = centerX + trackRadius * Math.cos(startAngle)
-    const startOnCenterlineY = centerY + trackRadius * Math.sin(startAngle)
+    const startR = getRadii(startAngle).center
+    const startOnCenterlineX = centerX + startR * Math.cos(startAngle)
+    const startOnCenterlineY = centerY + startR * Math.sin(startAngle)
 
     const keys = new Set()
 
@@ -44,6 +64,14 @@ function NeonRacer() {
       bestLapMs: null,
       passedHalfGate: false,
       paused: false,
+      // Arcade extras
+      score: 0,
+      message: null,
+      messageUntilMs: 0,
+      effectBoostUntil: 0,
+      effectSlowUntil: 0,
+      items: [], // { id, type, x, y, r, theta, expiresAt }
+      nextSpawnAt: performance.now() + 800,
     }
 
     stateRef.current = initialState
@@ -77,17 +105,21 @@ function NeonRacer() {
       const dx = x - centerX
       const dy = y - centerY
       const d = Math.hypot(dx, dy)
-      return d >= innerR && d <= outerR
+      const theta = Math.atan2(dy, dx)
+      const { inner, outer } = getRadii(theta)
+      return d >= inner && d <= outer
     }
 
     function checkGates(prevX, prevY, x, y) {
-      // Finish gate: radial at angle -90deg (x ~= centerX), near top region
-      const nearTopRegion = y <= centerY - innerR + 8
-      const crossedCenterVertical = (prevX - centerX) < 0 && (x - centerX) >= 0 || (prevX - centerX) > 0 && (x - centerX) <= 0
+      // Use vertical center line crossing for direction-agnostic gates,
+      // and dynamic region thresholds based on track profile at top/bottom
+      const innerTop = getRadii(-Math.PI / 2).inner
+      const innerBottom = getRadii(Math.PI / 2).inner
+      const nearTopRegion = y <= centerY - innerTop + 12
+      const nearBottomRegion = y >= centerY + innerBottom - 12
 
-      // Half gate: radial at +90deg, near bottom region
-      const nearBottomRegion = y >= centerY + innerR - 8
-      const crossedHalfVertical = crossedCenterVertical // same x=center line, but check region
+      const crossedCenterVertical = (prevX - centerX) < 0 && (x - centerX) >= 0 || (prevX - centerX) > 0 && (x - centerX) <= 0
+      const crossedHalfVertical = crossedCenterVertical
 
       const s = stateRef.current
 
@@ -108,17 +140,58 @@ function NeonRacer() {
       }
     }
 
+    function randomBetween(min, max) {
+      return min + Math.random() * (max - min)
+    }
+
+    function spawnItem(now, avoidX, avoidY) {
+      const s = stateRef.current
+      const roll = Math.random()
+      const type = roll < 0.4 ? 'accelerator' : roll < 0.7 ? 'obstacle' : 'bonus'
+      const theta = Math.random() * TAU
+      const rInfo = getRadii(theta)
+      const radialOffset = randomBetween(-rInfo.width * 0.35, rInfo.width * 0.35)
+      const radius = rInfo.center + radialOffset
+      const x = centerX + radius * Math.cos(theta)
+      const y = centerY + radius * Math.sin(theta)
+
+      // Avoid spawning too close to the car
+      if (Math.hypot(x - avoidX, y - avoidY) < 60) {
+        return // skip this spawn; next tick will try again
+      }
+
+      const id = `${now}-${Math.floor(Math.random() * 1e6)}`
+      const r = type === 'obstacle' ? 9 : type === 'accelerator' ? 8 : 7
+      const life = type === 'obstacle' ? 12000 : 9000
+      s.items.push({ id, type, x, y, r, theta, expiresAt: now + life })
+    }
+
     function update(dt) {
       const s = stateRef.current
       if (s.paused) return
 
-      const acc = 240 // px/s^2
-      const frictionOn = 48 // px/s^2
-      const frictionOff = 160 // px/s^2
-      const maxSpeed = 320 // px/s
+      const now = performance.now()
+
+      // Base handling
+      let acc = 240 // px/s^2
+      let frictionOn = 48 // px/s^2
+      let frictionOff = 160 // px/s^2
+      let maxSpeed = 320 // px/s
       const reverseMax = 120
       const steerBase = 2.6 // rad/s at ref speed
       const steerAtSpeed = 120 // px/s at which steering is strong
+
+      // Effects
+      if (now < s.effectBoostUntil) {
+        acc *= 1.5
+        maxSpeed *= 1.3
+        frictionOn *= 0.85
+      }
+      if (now < s.effectSlowUntil) {
+        acc *= 0.6
+        maxSpeed *= 0.7
+        frictionOn *= 1.25
+      }
 
       const pressingUp = keys.has('ArrowUp') || keys.has('w') || keys.has('W')
       const pressingDown = keys.has('ArrowDown') || keys.has('s') || keys.has('S')
@@ -168,11 +241,50 @@ function NeonRacer() {
       // Gate checks
       checkGates(s.lastPos.x, s.lastPos.y, s.car.x, s.car.y)
 
+      // Item spawning
+      if (now >= s.nextSpawnAt) {
+        spawnItem(now, s.car.x, s.car.y)
+        // Occasionally spawn two
+        if (Math.random() < 0.2) spawnItem(now, s.car.x, s.car.y)
+        s.nextSpawnAt = now + 700 + Math.random() * 900
+      }
+
+      // Despawn expired
+      if (s.items.length) {
+        s.items = s.items.filter(it => it.expiresAt > now)
+      }
+
+      // Collisions
+      const carCollisionR = 10
+      for (let i = s.items.length - 1; i >= 0; i--) {
+        const it = s.items[i]
+        const dxI = it.x - s.car.x
+        const dyI = it.y - s.car.y
+        if (dxI * dxI + dyI * dyI <= (it.r + carCollisionR) * (it.r + carCollisionR)) {
+          if (it.type === 'accelerator') {
+            s.effectBoostUntil = now + 1800
+            s.car.speed = Math.min(maxSpeed * 1.2, s.car.speed + 160)
+            s.message = 'BOOST!'
+            s.messageUntilMs = now + 900
+          } else if (it.type === 'obstacle') {
+            s.effectSlowUntil = now + 700
+            s.car.speed *= 0.35
+            s.message = 'HIT!'
+            s.messageUntilMs = now + 700
+          } else if (it.type === 'bonus') {
+            s.score += 100
+            s.message = '+100'
+            s.messageUntilMs = now + 800
+          }
+          s.items.splice(i, 1)
+        }
+      }
+
       // Gentle nudge back if far off track to keep things centered
       const dx = s.car.x - centerX
       const dy = s.car.y - centerY
       const dist = Math.hypot(dx, dy)
-      const limit = outerR + 40
+      const limit = boundaryLimit
       if (dist > limit) {
         const pull = (dist - limit) * 0.6
         const nx = dx / (dist || 1)
@@ -188,19 +300,32 @@ function NeonRacer() {
       ctx.clearRect(0, 0, WIDTH, HEIGHT)
 
       // Grass/dark field
-      const bgGrad = ctx.createRadialGradient(centerX, centerY, innerR * 0.5, centerX, centerY, outerR * 1.25)
+      const bgGrad = ctx.createRadialGradient(centerX, centerY, (trackRadius - trackWidth / 2) * 0.5, centerX, centerY, (trackRadius + trackWidth / 2) * 1.4)
       bgGrad.addColorStop(0, '#0a0a12')
       bgGrad.addColorStop(1, '#06060a')
       ctx.fillStyle = bgGrad
       ctx.fillRect(0, 0, WIDTH, HEIGHT)
 
-      // Track donut
+      // Wavy track ring
       ctx.save()
       ctx.beginPath()
-      ctx.arc(centerX, centerY, outerR, 0, Math.PI * 2)
-      ctx.arc(centerX, centerY, innerR, 0, Math.PI * 2, true)
+      for (let i = 0; i <= SEGMENTS; i++) {
+        const t = (i / SEGMENTS) * TAU
+        const r = getRadii(t).outer
+        const x = centerX + r * Math.cos(t)
+        const y = centerY + r * Math.sin(t)
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
+      for (let i = SEGMENTS; i >= 0; i--) {
+        const t = (i / SEGMENTS) * TAU
+        const r = getRadii(t).inner
+        const x = centerX + r * Math.cos(t)
+        const y = centerY + r * Math.sin(t)
+        ctx.lineTo(x, y)
+      }
       ctx.closePath()
-      const asphalt = ctx.createLinearGradient(0, centerY - outerR, 0, centerY + outerR)
+      const asphalt = ctx.createLinearGradient(0, centerY - (trackRadius + trackWidth), 0, centerY + (trackRadius + trackWidth))
       asphalt.addColorStop(0, 'rgba(255,255,255,0.06)')
       asphalt.addColorStop(0.5, 'rgba(255,255,255,0.12)')
       asphalt.addColorStop(1, 'rgba(255,255,255,0.06)')
@@ -210,46 +335,125 @@ function NeonRacer() {
       ctx.fill('nonzero')
       ctx.restore()
 
-      // Outer/Inner neon rails
+      // Outer/Inner neon rails (follow the wavy shape)
       ctx.save()
       ctx.lineWidth = 3
       ctx.strokeStyle = 'rgba(255, 59, 141, 0.55)'
       ctx.shadowColor = 'rgba(255, 59, 141, 0.65)'
       ctx.shadowBlur = 10
+      // Outer
       ctx.beginPath()
-      ctx.arc(centerX, centerY, outerR, 0, Math.PI * 2)
+      for (let i = 0; i <= SEGMENTS; i++) {
+        const t = (i / SEGMENTS) * TAU
+        const r = getRadii(t).outer
+        const x = centerX + r * Math.cos(t)
+        const y = centerY + r * Math.sin(t)
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
       ctx.stroke()
+      // Inner
       ctx.beginPath()
-      ctx.arc(centerX, centerY, innerR, 0, Math.PI * 2)
+      for (let i = 0; i <= SEGMENTS; i++) {
+        const t = (i / SEGMENTS) * TAU
+        const r = getRadii(t).inner
+        const x = centerX + r * Math.cos(t)
+        const y = centerY + r * Math.sin(t)
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
       ctx.stroke()
       ctx.restore()
 
-      // Center dashed line
+      // Center dashed line (wavy centerline)
       ctx.save()
       ctx.strokeStyle = 'rgba(255, 180, 220, 0.9)'
       ctx.lineWidth = 2
       ctx.setLineDash([10, 10])
       ctx.beginPath()
-      ctx.arc(centerX, centerY, trackRadius, 0, Math.PI * 2)
+      for (let i = 0; i <= SEGMENTS; i++) {
+        const t = (i / SEGMENTS) * TAU
+        const r = getRadii(t).center
+        const x = centerX + r * Math.cos(t)
+        const y = centerY + r * Math.sin(t)
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
       ctx.stroke()
       ctx.restore()
 
-      // Finish line (radial segment at top)
+      // Finish line (radial segment at top, using wavy radii)
+      const top = getRadii(-Math.PI / 2)
       ctx.save()
       ctx.strokeStyle = '#fff'
       ctx.lineWidth = 6
       ctx.beginPath()
-      ctx.moveTo(centerX, centerY - innerR)
-      ctx.lineTo(centerX, centerY - outerR)
+      ctx.moveTo(centerX + top.inner * Math.cos(-Math.PI / 2), centerY + top.inner * Math.sin(-Math.PI / 2))
+      ctx.lineTo(centerX + top.outer * Math.cos(-Math.PI / 2), centerY + top.outer * Math.sin(-Math.PI / 2))
       ctx.stroke()
       ctx.lineWidth = 3
       ctx.strokeStyle = '#000'
       ctx.setLineDash([6, 6])
       ctx.beginPath()
-      ctx.moveTo(centerX, centerY - innerR)
-      ctx.lineTo(centerX, centerY - outerR)
+      ctx.moveTo(centerX + top.inner * Math.cos(-Math.PI / 2), centerY + top.inner * Math.sin(-Math.PI / 2))
+      ctx.lineTo(centerX + top.outer * Math.cos(-Math.PI / 2), centerY + top.outer * Math.sin(-Math.PI / 2))
       ctx.stroke()
       ctx.restore()
+    }
+
+    function drawItems() {
+      const s = stateRef.current
+      if (!s.items.length) return
+      for (const it of s.items) {
+        ctx.save()
+        ctx.translate(it.x, it.y)
+        // Orient along direction of travel (tangent to centerline)
+        ctx.rotate(it.theta + Math.PI / 2)
+        if (it.type === 'accelerator') {
+          ctx.shadowColor = 'rgba(80, 220, 255, 0.8)'
+          ctx.shadowBlur = 12
+          ctx.fillStyle = 'rgba(80, 220, 255, 0.95)'
+          ctx.beginPath()
+          ctx.moveTo(it.r + 3, 0)
+          ctx.lineTo(-it.r, -it.r * 0.8)
+          ctx.lineTo(-it.r, it.r * 0.8)
+          ctx.closePath()
+          ctx.fill()
+        } else if (it.type === 'obstacle') {
+          ctx.shadowColor = 'rgba(255, 90, 90, 0.8)'
+          ctx.shadowBlur = 10
+          ctx.fillStyle = 'rgba(255, 60, 60, 0.95)'
+          const sz = it.r + 2
+          ctx.fillRect(-sz, -sz, sz * 2, sz * 2)
+          ctx.strokeStyle = 'rgba(0,0,0,0.65)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.moveTo(-sz, -sz)
+          ctx.lineTo(sz, sz)
+          ctx.moveTo(-sz, sz)
+          ctx.lineTo(sz, -sz)
+          ctx.stroke()
+        } else {
+          // bonus
+          ctx.shadowColor = 'rgba(255, 230, 120, 0.9)'
+          ctx.shadowBlur = 12
+          ctx.fillStyle = 'rgba(255, 215, 80, 0.98)'
+          const r = it.r
+          ctx.beginPath()
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * TAU
+            const x = Math.cos(a) * r
+            const y = Math.sin(a) * r
+            if (i === 0) ctx.moveTo(x, y)
+            else ctx.lineTo(x, y)
+            const a2 = a + TAU / 10
+            ctx.lineTo(Math.cos(a2) * (r * 0.45), Math.sin(a2) * (r * 0.45))
+          }
+          ctx.closePath()
+          ctx.fill()
+        }
+        ctx.restore()
+      }
     }
 
     function drawCar() {
@@ -324,18 +528,26 @@ function NeonRacer() {
       ctx.fillStyle = 'rgba(255,255,255,0.9)'
       ctx.shadowColor = 'rgba(255, 59, 141, 0.55)'
       ctx.shadowBlur = 8
+      // Left block
       ctx.textAlign = 'left'
       ctx.fillText(`Lap ${stateRef.current.lap}`, 12, 18)
       ctx.fillText(`Time ${toClock(thisLap)}`, 12, 34)
       if (s.bestLapMs != null) {
         ctx.fillText(`Best ${toClock(s.bestLapMs)}`, 12, 50)
       }
+      // Right block
       ctx.textAlign = 'right'
       ctx.fillText(`Speed ${Math.round(speedKmh)} u`, WIDTH - 12, 18)
+      ctx.fillText(`Score ${s.score}`, WIDTH - 12, 34)
+      // Center messages
       if (s.paused) {
         ctx.textAlign = 'center'
         ctx.font = '700 18px Orbitron, Inter, sans-serif'
         ctx.fillText('Paused', WIDTH / 2, 28)
+      } else if (s.message && now < s.messageUntilMs) {
+        ctx.textAlign = 'center'
+        ctx.font = '700 16px Orbitron, Inter, sans-serif'
+        ctx.fillText(s.message, WIDTH / 2, 40)
       }
       ctx.restore()
     }
@@ -346,6 +558,7 @@ function NeonRacer() {
 
       update(dt)
       drawTrack()
+      drawItems()
       drawCar()
       renderHUD()
 
@@ -365,10 +578,6 @@ function NeonRacer() {
     <div className="game-card">
       <div className="game-frame">
         <canvas ref={canvasRef} className="game-canvas" />
-        <div className="hud" aria-hidden>
-          <span>Neon Drift</span>
-          <span>Press R to reset • P to pause</span>
-        </div>
       </div>
       <div className="instructions" style={{ marginTop: 10 }}>
         <span className="kbd">W</span>
@@ -380,7 +589,7 @@ function NeonRacer() {
         <span className="kbd">←</span>
         <span className="kbd">↓</span>
         <span className="kbd">→</span>
-        to drive. <span className="kbd">Space</span> to brake.
+        to drive. <span className="kbd">Space</span> to brake. <span className="kbd">R</span> reset, <span className="kbd">P</span> pause.
       </div>
     </div>
   )
